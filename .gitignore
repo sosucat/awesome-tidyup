@@ -1,0 +1,14 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Ignore exported HTML files (do not commit local HTML exports)
+*.html
+
+# Ignore generated CSV outputs
+*.csv
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyc
