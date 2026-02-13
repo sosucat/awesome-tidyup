@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Extract file metadata from CS-6150-O01.html and save to CSV.
+"""Extract file metadata from one or more exported Canvas HTML files and save to CSV.
 
-Usage: python -m src.awesome_tidyup.extract_files -i CS-6150-O01.html -o files.csv
+Usage: python -m src.awesome_tidyup.extract_files -i data/inputs -o files.csv
+The `-i` argument may be a single HTML file or a directory containing HTML files.
 Requires: beautifulsoup4 (`pip install beautifulsoup4`)
 """
 from __future__ import annotations
@@ -20,6 +21,11 @@ except Exception:
 
 
 def parse_html(path: Path):
+    """Yield records parsed from a single HTML file `path`.
+
+    Each yielded record is a dict with keys: filename, access_restriction, used_in,
+    last_updated, size.
+    """
     html = path.read_text(encoding="utf-8", errors="ignore")
     soup = BeautifulSoup(html, "html.parser")
     rows = soup.find_all("tr", attrs={"data-file-id": True})
@@ -163,26 +169,37 @@ def parse_html(path: Path):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Extract file metadata from an exported HTML file")
-    p.add_argument("-i", "--input", default="CS-6150-O01.html", help="input HTML file path")
+    p = argparse.ArgumentParser(description="Extract file metadata from exported HTML file(s)")
+    p.add_argument("-i", "--input", default="data/inputs", help="input HTML file or directory (default: data/inputs)")
     p.add_argument("-o", "--output", default="files.csv", help="output CSV file path")
     args = p.parse_args()
-
     in_path = Path(args.input)
     if not in_path.exists():
-        print(f"Input file not found: {in_path}", file=sys.stderr)
+        print(f"Input path not found: {in_path}", file=sys.stderr)
         raise SystemExit(1)
 
-    records = list(parse_html(in_path))
+    # Collect all html files to process. If input is a file, use it; if directory, glob *.html
+    files = []
+    if in_path.is_file():
+        files = [in_path]
+    else:
+        files = sorted([p for p in in_path.glob("*.html") if p.is_file()])
 
+    all_count = 0
     with open(args.output, "w", newline="", encoding="utf-8") as fh:
-        fieldnames = ["filename", "access_restriction", "used_in", "last_updated", "size"]
+        fieldnames = ["course_number", "filename", "access_restriction", "used_in", "last_updated", "size"]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for r in records:
-            writer.writerow(r)
 
-    print(f"Wrote {len(records)} rows to {args.output}")
+        for f in files:
+            course_number = f.stem
+            for r in parse_html(f):
+                row = {"course_number": course_number}
+                row.update(r)
+                writer.writerow(row)
+                all_count += 1
+
+    print(f"Wrote {all_count} rows to {args.output}")
 
 
 if __name__ == "__main__":
