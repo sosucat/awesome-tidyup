@@ -5,7 +5,8 @@
 # Ignore exported HTML files (do not commit local HTML exports)
 *.html
 # allow keeping an empty inputs folder tracked by adding .gitkeep
-data/inputs/.gitkeep
+data/input_access/.gitkeep
+data/input_tidyup/.gitkeep
 
 # Ignore generated CSV outputs
 *.csv
