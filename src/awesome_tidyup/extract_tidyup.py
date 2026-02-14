@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract file metadata from one or more exported Canvas HTML files and save to CSV.
 
-Usage: python -m src.awesome_tidyup.extract_files -i data/inputs -o files.csv
+Usage: python -m src.awesome_tidyup.extract_tidyup -i data/input_tidyup -o tidyup_list.csv
 The `-i` argument may be a single HTML file or a directory containing HTML files.
 Requires: beautifulsoup4 (`pip install beautifulsoup4`)
 """
@@ -20,7 +20,7 @@ except Exception:
     sys.exit("BeautifulSoup4 is required. Install with: pip install beautifulsoup4")
 
 
-def parse_html(path: Path):
+def extract_tidyup_from_html(path: Path):
     """Yield records parsed from a single HTML file `path`.
 
     Each yielded record is a dict with keys: filename, access_restriction, used_in,
@@ -40,20 +40,24 @@ def parse_html(path: Path):
                 tb = html.find('</tbody>', s)
                 e = tb if tb != -1 else len(html)
             block = html[s:e]
-            # unescape entities so attributes like class=&quot;...&quot; become parseable
+            # unescape entities so attributes like class="..." become parseable
             block = html_unescape(block)
-            # filename
+            # filename — prefer label text (Select <filename>) when available, fallback to data-filename or span.name-text
             filename = ""
-            mfn = re.search(r'data-filename=(?:"([^"]+)"|\'([^\']+)\'|([^\s>]+))', block)
-            if mfn:
-                for g in mfn.groups():
-                    if g:
-                        filename = g.strip()
-                        break
+            mlabel = re.search(r'<label[^>]*for=["\']?file\d+["\']?[^>]*>(?:\s*Select\s*)?(.*?)</label>', block, re.I | re.S)
+            if mlabel:
+                filename = re.sub(r'<[^>]+>', '', mlabel.group(1)).strip()
             else:
-                mnt = re.search(r'<span[^>]*class=["\']?name-text["\']?[^>]*>(.*?)</span>', block, re.I | re.S)
-                if mnt:
-                    filename = re.sub(r'<[^>]+>', '', mnt.group(1)).strip()
+                mfn = re.search(r'data-filename=(?:"([^"]+)"|\'([^\']+)\'|([^\s>]+))', block)
+                if mfn:
+                    for g in mfn.groups():
+                        if g:
+                            filename = g.strip()
+                            break
+                else:
+                    mnt = re.search(r'<span[^>]*class=["\']?name-text["\']?[^>]*>(.*?)</span>', block, re.I | re.S)
+                    if mnt:
+                        filename = re.sub(r'<[^>]+>', '', mnt.group(1)).strip()
 
             # access restriction: locate the specific element's class attribute
             access = "none"
@@ -71,14 +75,19 @@ def parse_html(path: Path):
                 if 'file-lock' in block and 'd-none' not in block and 'sf-hidden' not in block:
                     access = 'restricted'
 
-            # used in
+            # used in (text) and used_in_link (href)
             used_in = ""
+            used_in_link = ""
             musage = re.search(r'<td[^>]*class=["\']?file-usage["\']?[^>]*>(.*?)</td>', block, re.I | re.S)
             if musage:
                 inner = musage.group(1)
                 mlink = re.search(r'<a[^>]*class=["\']?usage-link["\']?[^>]*>(.*?)</a>', inner, re.I | re.S)
                 if mlink:
                     used_in = re.sub(r'<[^>]+>', '', mlink.group(1)).strip()
+                    anchor_html = mlink.group(0)
+                    m_usage_href = re.search(r"href=(?:\"([^\"]*)\"|'([^']*)'|([^>\s]+))", anchor_html, re.I)
+                    if m_usage_href:
+                        used_in_link = next((g for g in m_usage_href.groups() if g), "").strip()
                 else:
                     msr = re.search(r'<span[^>]*class=["\']?sr-only["\']?[^>]*>(.*?)</span>', inner, re.I | re.S)
                     if msr:
@@ -92,11 +101,22 @@ def parse_html(path: Path):
             msize = re.search(r'<td[^>]*class=["\']?file-size["\']?[^>]*>(.*?)</td>', block, re.I | re.S)
             size = re.sub(r'<[^>]+>', '', msize.group(1)).strip() if msize else ""
 
+            # file link (anchor with class file-name-link) — find anchor then its href
+            file_link = ""
+            m_a = re.search(r'(<a\b[^>]*\bfile-name-link\b[^>]*>)', block, re.I)
+            if m_a:
+                a_tag = m_a.group(1)
+                m_href = re.search(r"href=(?:\"([^\"]*)\"|'([^']*)'|([^>\s]+))", a_tag, re.I)
+                if m_href:
+                    href = next((g for g in m_href.groups() if g), "")
+                    file_link = html_unescape(href.strip())
+
             # unescape any HTML entities
             filename = html_unescape(filename)
             used_in = html_unescape(used_in)
             last_updated = html_unescape(last_updated)
             size = html_unescape(size)
+            file_link = html_unescape(file_link)
 
             # normalize used_in: strip whitespace and surrounding quotes
             used_in = used_in.strip()
@@ -106,24 +126,37 @@ def parse_html(path: Path):
             used_in = used_in.replace('""', '"')
             used_in = used_in.strip()
 
+            # if file not used, set used_in_link to 'na'
+            if used_in == "Not Used":
+                used_in_link = "na"
+
             yield {
                 "filename": filename,
                 "access_restriction": access,
                 "used_in": used_in,
                 "last_updated": last_updated,
                 "size": size,
+                "file_link": file_link,
+                "used_in_link": used_in_link,
             }
         return
     for tr in rows:
-        # filename
+        # filename: prefer label text (Select <filename>) when present
         filename = ""
-        inp = tr.find("input", attrs={"data-filename": True})
-        if inp and inp.has_attr("data-filename"):
-            filename = inp["data-filename"].strip()
+        # label with for=fileNNN often contains readable filename text
+        lab = tr.find("label", attrs={"for": re.compile(r"^file\d+")})
+        if lab:
+            # label text often like 'Select <filename>' — strip leading 'Select'
+            lab_text = lab.get_text(strip=True)
+            filename = re.sub(r'^Select\s+', '', lab_text, flags=re.I)
         else:
-            nt = tr.find(class_="name-text")
-            if nt:
-                filename = nt.get_text(strip=True)
+            inp = tr.find("input", attrs={"data-filename": True})
+            if inp and inp.has_attr("data-filename"):
+                filename = inp["data-filename"].strip()
+            else:
+                nt = tr.find(class_="name-text")
+                if nt:
+                    filename = nt.get_text(strip=True)
 
         # access restriction: presence of .file-lock without d-none
         access = "none"
@@ -139,13 +172,17 @@ def parse_html(path: Path):
             if not ("d-none" in parts and "sf-hidden" in parts):
                 access = "restricted"
 
-        # used in
+        # used in (text) and used_in_link (href)
         used_in = ""
+        used_in_link = ""
         usage_td = tr.find("td", class_="file-usage")
         if usage_td:
             usage_link = usage_td.find(class_="usage-link")
             if usage_link:
                 used_in = usage_link.get_text(separator=" ", strip=True)
+                href = usage_link.get("href")
+                if href:
+                    used_in_link = href.strip()
             else:
                 sr = usage_td.find("span", class_="sr-only")
                 if sr:
@@ -159,19 +196,33 @@ def parse_html(path: Path):
         size_td = tr.find("td", class_="file-size")
         size = size_td.get_text(strip=True) if size_td else ""
 
+        # file link: look for an anchor with class 'file-name-link'
+        file_link = ""
+        fname_link = tr.find("a", class_="file-name-link") or tr.find(class_="file-name-link")
+        if fname_link and getattr(fname_link, "get", None):
+            href = fname_link.get("href")
+            if href:
+                file_link = href.strip()
+
+        # if file not used, set used_in_link to 'na'
+        if used_in == "Not Used":
+            used_in_link = "na"
+
         yield {
             "filename": filename,
             "access_restriction": access,
             "used_in": used_in,
             "last_updated": last_updated,
             "size": size,
+            "file_link": file_link,
+            "used_in_link": used_in_link,
         }
 
 
 def main():
     p = argparse.ArgumentParser(description="Extract file metadata from exported HTML file(s)")
-    p.add_argument("-i", "--input", default="data/inputs", help="input HTML file or directory (default: data/inputs)")
-    p.add_argument("-o", "--output", default="files.csv", help="output CSV file path")
+    p.add_argument("-i", "--input", default="data/input_tidyup", help="input HTML file or directory (default: data/input_tidyup)")
+    p.add_argument("-o", "--output", default="tidyup_list.csv", help="output CSV file path (default: tidyup_list.csv)")
     args = p.parse_args()
     in_path = Path(args.input)
     if not in_path.exists():
@@ -187,13 +238,13 @@ def main():
 
     all_count = 0
     with open(args.output, "w", newline="", encoding="utf-8") as fh:
-        fieldnames = ["course_number", "filename", "access_restriction", "used_in", "last_updated", "size"]
+        fieldnames = ["course_number", "filename", "access_restriction", "used_in", "last_updated", "size", "file_link", "used_in_link"]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
 
         for f in files:
             course_number = f.stem
-            for r in parse_html(f):
+            for r in extract_tidyup_from_html(f):
                 row = {"course_number": course_number}
                 row.update(r)
                 writer.writerow(row)

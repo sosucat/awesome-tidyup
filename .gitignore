@@ -14,3 +14,6 @@ data/inputs/.gitkeep
 __pycache__/
 *.py[cod]
 *.pyc
+
+# debugger files
+tools/*

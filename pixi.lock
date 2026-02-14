@@ -95,7 +95,7 @@ packages:
 - pypi: ./
   name: awesome-tidyup
   version: 0.1.0
-  sha256: b91148e9d4206960e4963b14aa6e14a4d90c83b2c63ee20cde1a9623899d1144
+  sha256: cdfafabbd44c6611f33c351030cf0059cf19f2a7a5ff914ce40453d28e22896a
   requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/noarch/beautifulsoup4-4.14.3-pyha770c72_0.conda
   sha256: bf1e71c3c0a5b024e44ff928225a0874fc3c3356ec1a0b6fe719108e6d1288f6
